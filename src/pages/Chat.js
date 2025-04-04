@@ -1,7 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import styled from "styled-components";
-import avatar from "../assets/avatar.png";  // Correct avatar path
-import icon from "../assets/icon.png";      // Correct chatbot path
 
 const ChatContainer = styled.div`
   display: flex;
@@ -9,8 +7,8 @@ const ChatContainer = styled.div`
   align-items: center;
   justify-content: flex-start;
   height: 100vh;
-  padding: 85px 20px 20px; /* Adjusted padding for navbar */
-  background: linear-gradient(135deg, #a8e6cf, #dcedc1); /* Calming Pastel */
+  padding: 85px 20px 20px;
+  background: linear-gradient(135deg, #a8e6cf, #dcedc1);
 `;
 
 const ChatBox = styled.div`
@@ -37,17 +35,16 @@ const MessageBubble = styled.div`
   max-width: 75%;
   padding: 14px;
   border-radius: 25px;
-  font-size: 1.1rem; /* Increased Font Size */
+  font-size: 1.1rem;
   background: ${({ isUser }) => (isUser ? "#4CAF50" : "#f1f1f1")};
   color: ${({ isUser }) => (isUser ? "white" : "black")};
   margin-left: ${({ isUser }) => (isUser ? "10px" : "0")};
   margin-right: ${({ isUser }) => (isUser ? "0" : "10px")};
 `;
 
-const UserIcon = styled.img`
-  width: 50px; /* Increased Avatar Size */
-  height: 50px;
-  border-radius: 50%;
+const UserEmoji = styled.span`
+  font-size: 30px;
+  margin: 0 10px;
 `;
 
 const InputContainer = styled.div`
@@ -57,21 +54,21 @@ const InputContainer = styled.div`
   margin-top: 15px;
 `;
 
-const Input = styled.input`
+const TextInput = styled.input`
   flex: 1;
   padding: 14px;
   border-radius: 25px;
-  border: 1px solid #ccc;
+  border: 2px solid #4CAF50;
+  font-size: 1rem;
   outline: none;
-  font-size: 1rem; /* Increased Font Size */
 `;
 
-const SendButton = styled.button`
+const Button = styled.button`
   margin-left: 10px;
-  padding: 14px 25px;
+  padding: 14px 20px;
   border-radius: 25px;
   border: none;
-  background: #4CAF50;
+  background: ${({ isListening }) => (isListening ? "#E91E63" : "#4CAF50")};
   color: white;
   font-weight: bold;
   font-size: 1rem;
@@ -79,53 +76,89 @@ const SendButton = styled.button`
   transition: 0.3s;
 
   &:hover {
-    background: #388E3C;
+    background: ${({ isListening }) => (isListening ? "#C2185B" : "#388E3C")};
   }
 `;
 
 const Chat = () => {
   const [messages, setMessages] = useState([
-    { text: "Hello! How can I help you today?", isUser: false }
+    { text: "Hello! How can I assist you today?", isUser: false }
   ]);
   const [input, setInput] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
 
-  const sendMessage = async () => {
-    if (input.trim() === "") return;
-  
-    const userMessage = { text: input, isUser: true };
+  useEffect(() => {
+    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+      alert("Speech Recognition is not supported in this browser.");
+      return;
+    }
+
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true; // Keep listening while the user speaks
+    recognitionRef.current.interimResults = false; // Only finalize words when user stops
+    recognitionRef.current.lang = "en-US";
+
+    recognitionRef.current.onstart = () => setIsListening(true);
+    
+    recognitionRef.current.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript;
+      setInput(transcript);
+      sendMessage(transcript);
+    };
+
+    recognitionRef.current.onend = () => {
+      setIsListening(false);
+    };
+
+  }, []);
+
+  const startListening = () => {
+    if (!recognitionRef.current) return;
+    recognitionRef.current.start();
+  };
+
+  const stopListening = () => {
+    if (!recognitionRef.current) return;
+    recognitionRef.current.stop();
+  };
+
+  const sendMessage = async (text) => {
+    if (!text.trim()) return;
+
+    const userMessage = { text, isUser: true };
     setMessages((prev) => [...prev, userMessage]);
-    const userInput = input; // Save before clearing
     setInput("");
-  
+
     try {
       const response = await fetch("http://localhost:5000/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ message: userInput }),
+        body: JSON.stringify({ message: text }),
       });
-  
+
       const data = await response.json();
-  
-      const botMessage = {
-        text: data.response || "Sorry, I didn't understand that.",
-        isUser: false,
-      };
+      const botResponse = data.response || "Sorry, I didn't understand that.";
+
+      const botMessage = { text: botResponse, isUser: false };
       setMessages((prev) => [...prev, botMessage]);
+
+      speak(botResponse);
     } catch (error) {
-      const errorMessage = {
-        text: "Error connecting to the server. Please try again.",
-        isUser: false,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      const errorMessage = "Error connecting to server. Try again.";
+      setMessages((prev) => [...prev, { text: errorMessage, isUser: false }]);
+      speak(errorMessage);
     }
   };
-  
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      sendMessage();
-    }
+
+  const speak = (text) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    speechSynthesis.speak(utterance);
   };
 
   return (
@@ -133,21 +166,24 @@ const Chat = () => {
       <ChatBox>
         {messages.map((msg, index) => (
           <Message key={index} isUser={msg.isUser}>
-            {!msg.isUser && <UserIcon src={icon} alt="Chatbot" />} {/* Chatbot Icon */}
+            {!msg.isUser && <UserEmoji>🤖</UserEmoji>}
             <MessageBubble isUser={msg.isUser}>{msg.text}</MessageBubble>
-            {msg.isUser && <UserIcon src={avatar} alt="User" />} {/* User Avatar */}
+            {msg.isUser && <UserEmoji>🧑</UserEmoji>}
           </Message>
         ))}
       </ChatBox>
       <InputContainer>
-        <Input
+        <TextInput
           type="text"
-          placeholder="Type a message..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown} /* Enter to Send */
+          placeholder="Type a message..."
+          onKeyPress={(e) => e.key === "Enter" && sendMessage(input)}
         />
-        <SendButton onClick={sendMessage}>Send</SendButton>
+        <Button onClick={() => sendMessage(input)}>Send</Button>
+        <Button isListening={isListening} onClick={isListening ? stopListening : startListening}>
+          {isListening ? "🎙️ Stop" : "🎤 Speak"}
+        </Button>
       </InputContainer>
     </ChatContainer>
   );
